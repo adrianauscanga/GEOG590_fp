@@ -20,61 +20,211 @@ pdf.options(useDingbats = TRUE)
 
 # Introduction #
 
- This RMarkdown document describes reading and plotting a netCDF file.
-  Load packages 
+In this project, I analyze precipitation trends in Mexican tropical forests using the TerraClimate dataset. TerraClimate comprises monthly climate and climatic water balance for the globe from 1958 to 2015 in a spatial resolution of ~4 km. 
+First, I downloaded the precipitation nc file from the Climatology Lab website. I read the dataset and visualize the first slice with the following R code: 
+
+###Load packages 
 
 ```{r load_packages, message=FALSE}
  # load packages
- library(sf)
- library(raster)
- library(rasterVis)
- library(RColorBrewer)
+library(ncdf4)
+library(RNetCDF)
+library(ncdf.tools)
+library(lattice)
+library(RColorBrewer)
+library(latticeExtra)
+library(sf)
+library(raster)
+library(rasterVis)
+library(ggplot2)
+library(ggthemes)
 ```
 
-# Read data #
+###Read data
 
-Shapefile 
+Printing the nc file provides all the information about the dataset. 
 
-# Read a shapefile #
+```{r}
+# set path and filename
+ncpath <- "~/GEOG590/"
+ncname <- "agg_terraclimate_ppt_1958_CurrentYear_GLOBE.nc"  
+ncfname <- paste(ncpath, ncname, sep="")
+# open a netCDF file
+ncin <- nc_open(ncfname)
+print(ncin)
+```
 
-Read a shapefile of world coastlines and countries.
+###Get latitude, longitude and time
+  
+```{r}
+# get longitude and latitude
+lon <- ncvar_get(ncin,"lon")
+nlon <- dim(lon)
+head(lon)
+lat <- ncvar_get(ncin,"lat")
+nlat <- dim(lat)
+head(lat)
+print(c(nlon,nlat))
 
-```{r read_shp}
- # read a world shapefile
-shp_path <- "~/OregonPhD/Term7_Spring2019/GEOG590_fp/ne_110m_admin_0_countries/"
+# get time
+time <- ncvar_get(ncin,"time")
+head(time); tail(time)
+tunits <- ncatt_get(ncin,"time","units")
+nt <- dim(time)
+head(time); tail(time)
+nt
+
+# convert time -- split the time units string into fields
+tustr <- strsplit(tunits$value, " ")
+ptime <- convertDateNcdf2R(time, unlist(tustr)[1], origin = as.POSIXct(unlist(tustr)[3], 
+                                                                       tz = "UTC"), time.format = "%Y-%m-%d")
+head(time); tail(time)
+head(ptime); tail(ptime)
+
+# get data
+dname <- "ppt" 
+ppt_array <- ncvar_get(ncin,dname)
+# get attributes of variable
+dname <- "ppt" 
+dlname <- ncatt_get(ncin,dname,"long_name")
+dunits <- ncatt_get(ncin,dname,"units")
+fillvalue <- ncatt_get(ncin,dname,"_FillValue")
+print(c(dlname$value, dunits$value, fillvalue$value))
+dim(ppt_array)
+
+# replace netCDF fill values with NA's
+ppt_array[ppt_array==fillvalue$value] <- NA
+length(na.omit(as.vector(ppt_array[,,1])))
+```
+  
+
+###Plot a slice of the array
+
+I used the shapefile of world countries to add an outline.
+
+```{r}
+# set path and shape file name (countries outlines)
+shp_path <- "~/GEOG590/shp_files/ne_110m_admin_0_countries/"
 shp_name <- "ne_110m_admin_0_countries.shp"
 shp_file <- paste(shp_path, shp_name, sep="")
+# read the shapefile
 world_shp <- read_sf(shp_file)
 world_outline <- as(st_geometry(world_shp), Class="Spatial")
+
 ```
 
-# Plot the shape file #
+I selected the first slice, but it is possible to visualize any month of the 60 years
 
-```{r plot_shapefile}
- # plot the world outlines
- plot(world_outline, col="blue", lwd=1)
+```{r}
+# levelplot of a slice of the array
+n <- 1
+ppt_slice <- ppt_array[,, n]
+grid <- expand.grid(lon=lon, lat=lat)
+cutpts <- c(0,5,20,50,100,500,1000,2000,3000)
+plt <- levelplot(ppt_slice ~ lon * lat, data=grid, at=cutpts, cuts=11, pretty=T, 
+                 col.regions=((brewer.pal(9,"Blues"))))
+plt + latticeExtra::layer(sp.lines(world_outline, col="black", lwd=0.5))
 ```
 
-Read alpha 
+I will get the beginning and ending year of the time series
 
-Now read in alpha.
-
-```{r read_data}
- # read alpha (AE/PE)
- alpha_path <- "~/OregonPhD/Term7_Spring2019/GEOG590_fp/nc_files/"
- alpha_name <- "cru10min30_bio.nc"
- alpha_file <- paste(alpha_path, alpha_name, sep="")
- alpha <- raster(alpha_file, varname="mipt")
- alpha
+```{r}
+# get beginning year and ending year, number of years, and set nm
+beg_date <- strsplit(as.character(ptime[1]), " ")
+beg_yr <- as.numeric(unlist(strsplit(as.character(beg_date), "-"))[1])
+end_date <- strsplit(as.character(ptime[nt]), " ")
+end_yr <- as.numeric(unlist(strsplit(as.character(end_date), "-"))[1])
+nyrs <- end_yr - beg_yr + 1
+nm <- 12
+print(c(beg_yr, end_yr, nyrs, nm))
 ```
 
-# Plot the data #
+# Data analysis and visualization #
 
-Finally, plot alpha using the `levelplot()` function from `rasterVis`:
+Research conducted in this region suggest that precipitation during the dry season does not present substantial variation, but the rainy season months have shown a decrease in precipitation. To get an idea of monthly trends, I will plot the average precipitation per month through time. 
 
-```{r plot_data}
- # rasterVis plot
- mapTheme <- rasterTheme(region=brewer.pal(8,"BrBG"))
- plt <- levelplot(alpha, margin=F, par.settings=mapTheme, main="AE/PE")
- plt + layer(sp.lines(world_outline, col="black", lwd=1.0))
+```{r}
+# generate a decimal year ("YrMn") time coordinate
+YrMn <- seq(beg_yr, end_yr+1-(1/12), by=(1/12))
+head(YrMn); tail(YrMn)
+# year
+year <- as.integer(YrMn)
+head(year); tail(year)
+# month
+month <- rep(seq(1, 12, by=1), nyrs)
+month_names <- c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov", "Dec")
+month <- rep(month_names, nyrs)
+head(month); tail(month)
+month <- factor(month, levels=c("Dec","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov"))
+str(month)
+```
+
+###Precipitation Trend in two locations
+
+I am interested in studying climatic changes in cloud forest ecosystems. Thus, I will compare the precipitation trends of two different locations of cloud forest.
+
+```{r}
+# get indices of the grid cell closest to Santa Cruz Tepetotutla, Oaxaca (1)
+tlon1 <- -96.5593; tlat1 <- 17.7390
+j <- which.min(abs(lon-tlon1))
+k <- which.min(abs(lat-tlat1))
+print(c(j, lon[j], k, lat[k]))
+```
+
+Plot the time series:
+```{r}
+# get time series for the closest gridpoint
+ppt_ts <- ppt_array[j, k, ]
+
+# plot time series of grid point
+plot(YrMn, ppt_ts, type="l", xlab="Year", ylab=dname, main=dlname$value, col="blue")
+```
+
+
+```{r}
+# get indices of the grid cell closest to Coatepec, Veracruz (2)
+tlon2 <- -96.9954; tlat2 <- 19.4583
+j2 <- which.min(abs(lon-tlon2))
+k2 <- which.min(abs(lat-tlat2))
+print(c(j2, lon[j2], k2, lat[k2]))
+```
+
+Plot the time series:
+```{r}
+# get time series for the closest gridpoint
+ppt_ts2 <- ppt_array[j2, k2, ]
+
+# plot time series of grid point
+plot(YrMn, ppt_ts2, type="l", xlab="Year", ylab=dname, main=dlname$value, col="blue")
+```
+
+Now, I will plot monthly trends using a multi-panel plot
+```{r}
+# make dataframe
+ppt_df <- data.frame(YrMn, year, month, ppt_ts)
+str(ppt_df)
+head(ppt_df); tail(ppt_df)
+```
+
+```{r}
+ggplot(data = ppt_df, aes(x=year, y=ppt_ts)) +
+  geom_smooth(method = "loess", size=0.5, color="blue") +
+  geom_line() + 
+  facet_grid(month ~ .)+ 
+  theme(aspect.ratio = (0.04 * (nm/2)))  
+```
+
+```{r}
+# make dataframe
+ppt_df2 <- data.frame(YrMn, year, month, ppt_ts2)
+str(ppt_df)
+head(ppt_df); tail(ppt_df)
+```
+
+```{r}
+ggplot(data = ppt_df2, aes(x=year, y=ppt_ts2)) +
+  geom_smooth(method = "loess", size=0.5, color="blue") +
+  geom_line() + 
+  facet_grid(month ~ .)+ 
+  theme(aspect.ratio = (0.04 * (nm/2)))   
 ```
