@@ -228,3 +228,5 @@ ggplot(data = ppt_df2, aes(x=year, y=ppt_ts2)) +
   facet_grid(month ~ .)+ 
   theme(aspect.ratio = (0.04 * (nm/2)))   
 ```
+
+Next steps: analyze spatial variation. 
